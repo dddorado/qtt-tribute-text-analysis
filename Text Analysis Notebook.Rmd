@@ -1,0 +1,256 @@
+---
+title: "Quarantine Tribute Tips Facebook Page Text Analysis"
+output: html_notebook
+bibliography: citations.bib
+link-citations: yes
+csl: mla.csl
+---
+
+From social media to product reviews, text is an increasingly important type of data across applications. In many instances, text is replacing other forms of unstructured data due to how inexpensive and current it is. However, to take advantage of everything that text has to offer, you need to know how to think about, clean, summarize, and model text.
+
+# Loading the required packages
+```{r}
+library(tidyverse)
+library(tidytext)
+library(tm)
+library(topicmodels)
+library(textdata)
+library(RColorBrewer)
+library(reshape2)
+library(wordcloud)
+```
+
+**The data were processed using:**
+
+- ```R-4.2.1 language``` [@R]
+- ```RStudio 2022.02.3+492 "Prairie Trillium" Release (1db809b8323ba0a87c148d16eb84efe39a8e7785, 2022-05-20) for Windows``` [@RStudio]
+- ```tidyverse``` [@tidyverse]
+- ```tidytext``` [@tidytext]
+- ```tm```[@tmA]
+- ```topicmodels```[@topicmodels]
+- ```textdata```[@textdata]
+- ```RColorBrewer```[@RColorBrewer]
+- ```reshape2```[@reshape2]
+- ```wordcloud```[@wordcloud]
+
+# Load datasets
+```{r}
+qtt_data <- list.files(pattern = "*.csv") %>% 
+  map_df(~read_csv(.))
+```
+
+# Create appropriate column names
+```{r}
+colnames(qtt_data)[1]<- "url"
+colnames(qtt_data)[2]<- "username"
+colnames(qtt_data)[3]<- "post_text"
+colnames(qtt_data)[4]<- "timestamp"
+colnames(qtt_data)[5]<- "images"
+colnames(qtt_data)[6]<- "gif"
+colnames(qtt_data)[7]<- "videos"
+colnames(qtt_data)[8]<- "poll"
+colnames(qtt_data)[9]<- "reacts"
+colnames(qtt_data)[10]<- "comments"
+colnames(qtt_data)[11]<- "comment_url"
+colnames(qtt_data)[12]<- "commenter1"
+colnames(qtt_data)[13]<- "comment_text"
+colnames(qtt_data)[14]<- "reply_url"
+colnames(qtt_data)[15]<- "commenter2"
+colnames(qtt_data)[16]<- "reply_text"
+```
+
+# Modify the data type of timestamp from chr to dttm
+```{r}
+qtt_data$timestamp <- strptime(qtt_data$timestamp, "%m/%d/%Y %H:%M")
+```
+
+# Creating a unique id
+```{r}
+qtt_data <- qtt_data %>%
+  mutate(id = row_number())
+```
+
+# Tokenizing text
+We impose structure on text by splitting each post or comments into separate words. We don’t care about the syntax or structure of the post or comments, we’re simply cutting out each word in each post or comments and mixing them up in a bag: a bag of words! Each separate body of text is a document; in this case, the post or comments. Each unique word is known as a term. Every occurrence of a term known as a token; thus cutting up documents into words is known as tokenizing.
+```{r}
+qtt_data$post_text %>%
+  head()
+```
+
+## Using the distinct()
+Given the structure of our post_text dataset, we need to delete the duplicated values to avoid an inflated word count. This is something that can be addressed by the `distinct()`. The `.keep_all = TRUE` attribute will retain all other variables.
+```{r}
+qtt_data %>%
+  distinct(post_text)
+```
+
+## Using unnest_tokens()
+After loading the `tidytext` package, tokenizing is as simple as using the `unnest_tokens()` function. After specifying the input data frame, we provide the name of the column of words we're creating by tokenizing followed by the name of the column with the text we want to tokenize. As a bonus, `unnest_tokens()` has done some cleaning for us: punctuation is gone, each word is lowercase, and white space has been removed.
+```{r}
+qtt_data %>% 
+  distinct(post_text, .keep_all = TRUE) %>%
+  unnest_tokens(word, post_text) %>%
+  select(id, word) 
+```
+
+## Counting words
+Now that we have imposed a tidy structure on the text, we can count words using the `count()` function. To make it easy to read the counts, we use the `arrange()` verb, and the `desc()` helper function. You shouldn’t be surprised to see that the most commonly used words are just common words like **“na”** that doesn’t give much insight into the content of the post or comments. We need to do some additional cleaning before our word counts will be informative.
+```{r}
+qtt_data %>% 
+  distinct(post_text, .keep_all = TRUE) %>%
+  unnest_tokens(word, post_text) %>%
+  count(word) %>% 
+  arrange(desc(n))
+```  
+  
+## Using anti_join()
+These common and uninformative words are known as stop words and we’d like to remove them from our tidied data frame. A set of functions in `dplyr` comes in handy. These are known as *joins*, and as the name suggests, they are used to join two data frames together based on one or more matching columns. The join we want is called an `anti_join()`. `In an anti_join()`, a row in the data frame on the left is retained as long as the value in the matching column isn’t shared by the data frame on the right.
+
+```{r}
+qtt_data %>% 
+  distinct(post_text, .keep_all = TRUE) %>%
+  unnest_tokens(word, post_text) %>% 
+  anti_join(stop_words) %>%
+  count(word) %>% 
+  arrange(desc(n))
+```
+
+## Custom stop words
+```{r}
+stop_words
+```
+One problem we’ve seen is that even after removing the standard stop words, seen here in stop_words, we often have words in our data that we’d like to have removed because they aren’t incredibly informative. Put another way, we would like to add some custom stop words to this data frame.
+
+## Using tribble()
+The easiest way to do this is to first create our own data frame, or tibble, composed of the custom stop words we would like to remove. To do this, we use the `tribble()` function.The arguments in `tribble()` are simple: the column names, with the tilde in front of them, followed by the values on each row. We can even organize the inputs to look like the data frame itself. 
+
+```
+tribble(
+  ~word, ~lexicon,
+  "na", "CUSTOM",
+  "sa", "CUSTOM",
+  "ng", "CUSTOM"
+)
+```
+
+Here we want the columns to be a character type and so we put the values in quotes. Note the column names match the column names in the **stop_words** data frame and they don’t need to be in quotes because they aren’t values in the data frame.
+
+## Using bind_rows()
+Let’s assign this new data frame to custom_stop_words. Now let’s combine the original stop_words and our custom_stop_words. We’ve briefly discussed joins, which are about joining columns with matching values based on a shared column. This is different because we want to bind rows together, not join columns. Here, we use a function called `bind_rows()`. To use it, the two data frames need to have matching columns with matching names.
+
+```{r}
+custom_stop_words <- tribble(
+  ~word, ~lexicon,
+  "na", "CUSTOM",
+  "sa", "CUSTOM",
+  "ng", "CUSTOM",
+  "po", "CUSTOM",
+  "ang", "CUSTOM",
+  "yung", "CUSTOM",
+  "lang", "CUSTOM",
+  "mga", "CUSTOM",
+  "ko", "CUSTOM",
+  "1", "CUSTOM",
+  "2", "CUSTOM",
+  "para", "CUSTOM",
+  "kung", "CUSTOM",
+  "ako", "CUSTOM",
+  "3", "CUSTOM",
+  "pa", "CUSTOM",
+  "kasi", "CUSTOM",
+  "ka", "CUSTOM",
+  "din", "CUSTOM",
+  "4", "CUSTOM",
+  "mo", "CUSTOM",
+  "niyo", "CUSTOM",
+  "di", "CUSTOM",
+  "kayo", "CUSTOM",
+  "pero", "CUSTOM",
+  "naman", "CUSTOM",
+  "ba", "CUSTOM",
+  "pag", "CUSTOM",
+  "5", "CUSTOM",
+  "ano", "CUSTOM",
+  "mag", "CUSTOM",
+  "siya", "CUSTOM",
+  "nyo", "CUSTOM",
+  "mas", "CUSTOM",
+  "rin", "CUSTOM",
+  "6", "CUSTOM",
+  "namin", "CUSTOM",
+  "yan", "CUSTOM",
+  "sya", "CUSTOM",
+  "talaga", "CUSTOM",
+  "https", "CUSTOM",
+  "sila", "CUSTOM",
+  "kapag", "CUSTOM",
+  "kahit", "CUSTOM",
+  "kaya", "CUSTOM",
+  "parang", "CUSTOM",
+  "pang", "CUSTOM",
+  "nila", "CUSTOM",
+  "tapos", "CUSTOM",
+  "pwede", "CUSTOM",
+  "yun", "CUSTOM",
+  "ung", "CUSTOM",
+  "ay", "CUSTOM",
+  "nag", "CUSTOM",
+  "daw", "CUSTOM",
+  "kami", "CUSTOM",
+  "hindi", "CUSTOM",
+  "sana", "CUSTOM",
+  "nya", "CUSTOM",
+  "dahil", "CUSTOM",
+  "ito", "CUSTOM",
+  "niya", "CUSTOM",
+  "si", "CUSTOM",
+  "natin", "CUSTOM",
+  "ni", "CUSTOM",
+  "10", "CUSTOM",
+  "nung", "CUSTOM",
+  "kayong", "CUSTOM",
+  "tayo", "CUSTOM",
+  "akong", "CUSTOM",
+  "19", "CUSTOM",
+  "7", "CUSTOM",
+  "8", "CUSTOM",
+  "12", "CUSTOM",
+  "isang", "CUSTOM",
+  "sobrang", "CUSTOM",
+  "11", "CUSTOM",
+  "nasa", "CUSTOM",
+  "9", "CUSTOM",
+  "www.facebook.com", "CUSTOM",
+  "eh", "CUSTOM",
+  "kong", "CUSTOM",
+  "kaso", "CUSTOM",
+  "san", "CUSTOM",
+  "nga", "CUSTOM",
+  "naka", "CUSTOM",
+  "tas", "CUSTOM"
+)
+
+stop_words2 <- stop_words %>%
+bind_rows(custom_stop_words)
+```
+
+Here we have our final code syntax
+```{r}
+# Tokenize the post_text dataset
+tidy_qtt_post <- qtt_data %>% 
+  # Remove duplicate FB post
+  distinct(post_text, .keep_all = TRUE) %>%
+  # Tokenize the post_text data
+  unnest_tokens(word, post_text) %>% 
+  # Remove stop words
+  anti_join(stop_words2)
+
+tidy_qtt_post %>% 
+  # Compute word counts and arrange in descending order
+  count(word) %>% 
+  arrange(desc(n))
+```
+
+
+
+# Reference
