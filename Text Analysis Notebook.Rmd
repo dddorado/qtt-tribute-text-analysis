@@ -8,7 +8,8 @@ csl: mla.csl
 
 From social media to product reviews, text is an increasingly important type of data across applications. In many instances, text is replacing other forms of unstructured data due to how inexpensive and current it is. However, to take advantage of everything that text has to offer, you need to know how to think about, clean, summarize, and model text.
 
-# Loading the required packages
+# Ingress
+## Load dependecies
 ```{r}
 library(tidyverse)
 library(tidytext)
@@ -33,13 +34,13 @@ library(wordcloud)
 - ```reshape2```[@reshape2]
 - ```wordcloud```[@wordcloud]
 
-# Load datasets
+## Load datasets
 ```{r}
 qtt_data <- list.files(pattern = "*.csv") %>% 
   map_df(~read_csv(.))
 ```
 
-# Create appropriate column names
+## Create appropriate column names
 ```{r}
 colnames(qtt_data)[1]<- "url"
 colnames(qtt_data)[2]<- "username"
@@ -59,32 +60,53 @@ colnames(qtt_data)[15]<- "commenter2"
 colnames(qtt_data)[16]<- "reply_text"
 ```
 
-# Modify the data type of timestamp from chr to dttm
+## Seperate timestamp to date and time
+```{r}
+qtt_data <- qtt_data %>%
+  mutate(datetime = timestamp) %>%
+  separate(datetime, sep = " ", into = c("date", "time"))
+```
+
+## Seperate date to year, month, and day
+```{r}
+qtt_data <- qtt_data %>%
+  separate(date, sep = "\\/", into = c("month", "day", "year")) %>%
+  mutate_at(c("month", "day", "year"), as.numeric)
+```
+
+## Recode numerical months to text
+```{r}
+qtt_data$month <- as.factor(qtt_data$month)
+qtt_data$month <- recode(qtt_data$month, '1' = 'January', '2' = 'February', '3' = 'March', '4' = 'April', '5' = 'May', '6' = 'June', '7' = 'July', '8' = 'August', '9' = 'September', '10' = 'October', '11' = 'November', '12' = 'December')
+```
+
+
 ```{r}
 qtt_data$timestamp <- strptime(qtt_data$timestamp, "%m/%d/%Y %H:%M")
 ```
 
-# Creating a unique id
+## Creating a unique id
 ```{r}
 qtt_data <- qtt_data %>%
   mutate(id = row_number())
 ```
 
-# Tokenizing text
+# Preparing **QTT FB posts** for analysis
+## Tokenizing text
 We impose structure on text by splitting each post or comments into separate words. We don’t care about the syntax or structure of the post or comments, we’re simply cutting out each word in each post or comments and mixing them up in a bag: a bag of words! Each separate body of text is a document; in this case, the post or comments. Each unique word is known as a term. Every occurrence of a term known as a token; thus cutting up documents into words is known as tokenizing.
 ```{r}
 qtt_data$post_text %>%
   head()
 ```
 
-## Using the distinct()
+### Using the distinct()
 Given the structure of our post_text dataset, we need to delete the duplicated values to avoid an inflated word count. This is something that can be addressed by the `distinct()`. The `.keep_all = TRUE` attribute will retain all other variables.
 ```{r}
 qtt_data %>%
   distinct(post_text)
 ```
 
-## Using unnest_tokens()
+### Using unnest_tokens()
 After loading the `tidytext` package, tokenizing is as simple as using the `unnest_tokens()` function. After specifying the input data frame, we provide the name of the column of words we're creating by tokenizing followed by the name of the column with the text we want to tokenize. As a bonus, `unnest_tokens()` has done some cleaning for us: punctuation is gone, each word is lowercase, and white space has been removed.
 ```{r}
 qtt_data %>% 
@@ -93,7 +115,7 @@ qtt_data %>%
   select(id, word) 
 ```
 
-## Counting words
+### Counting words
 Now that we have imposed a tidy structure on the text, we can count words using the `count()` function. To make it easy to read the counts, we use the `arrange()` verb, and the `desc()` helper function. You shouldn’t be surprised to see that the most commonly used words are just common words like **“na”** that doesn’t give much insight into the content of the post or comments. We need to do some additional cleaning before our word counts will be informative.
 ```{r}
 qtt_data %>% 
@@ -103,7 +125,7 @@ qtt_data %>%
   arrange(desc(n))
 ```  
   
-## Using anti_join()
+### Using anti_join()
 These common and uninformative words are known as stop words and we’d like to remove them from our tidied data frame. A set of functions in `dplyr` comes in handy. These are known as *joins*, and as the name suggests, they are used to join two data frames together based on one or more matching columns. The join we want is called an `anti_join()`. `In an anti_join()`, a row in the data frame on the left is retained as long as the value in the matching column isn’t shared by the data frame on the right.
 
 ```{r}
@@ -115,13 +137,13 @@ qtt_data %>%
   arrange(desc(n))
 ```
 
-## Custom stop words
+### Custom stop words
 ```{r}
 stop_words
 ```
 One problem we’ve seen is that even after removing the standard stop words, seen here in stop_words, we often have words in our data that we’d like to have removed because they aren’t incredibly informative. Put another way, we would like to add some custom stop words to this data frame.
 
-## Using tribble()
+### Using tribble()
 The easiest way to do this is to first create our own data frame, or tibble, composed of the custom stop words we would like to remove. To do this, we use the `tribble()` function.The arguments in `tribble()` are simple: the column names, with the tilde in front of them, followed by the values on each row. We can even organize the inputs to look like the data frame itself. 
 
 ```
@@ -135,7 +157,7 @@ tribble(
 
 Here we want the columns to be a character type and so we put the values in quotes. Note the column names match the column names in the **stop_words** data frame and they don’t need to be in quotes because they aren’t values in the data frame.
 
-## Using bind_rows()
+### Using bind_rows()
 Let’s assign this new data frame to custom_stop_words. Now let’s combine the original stop_words and our custom_stop_words. We’ve briefly discussed joins, which are about joining columns with matching values based on a shared column. This is different because we want to bind rows together, not join columns. Here, we use a function called `bind_rows()`. To use it, the two data frames need to have matching columns with matching names.
 
 ```{r}
@@ -251,6 +273,61 @@ tidy_qtt_post %>%
   arrange(desc(n))
 ```
 
+# Visualizing counts with geom_col()
+With our text tidied, our initial summary is again as easy as using `count()`, as well as `arrange()` and `desc()` to make it easy to read. Even better, let’s visualize these counts with a bar plot! Here we use `ggplot()`, where the first argument is our count data, and the second argument is using the `aes()` or aesthetic helper function to map columns in our data to elements of the plot. Here it is natural to assign word to the x-axis and n (the count) to the y-axis. Finally, we add the `geom_col()` layer to produce a bar plot. As an aside, the “col” in `geom_col()` stands for column, where a column plot is simply another way to refer to a bar plot. However, what we get is a mess. There are a number of things wrong with this bar plot. Let’s address them in turn.
+```{r}
+word_counts_comments <- tidy_qtt_post %>%
+  count(word) %>%
+  arrange(desc(n))
 
+ggplot(word_counts_comments, aes(x = word, y = n)) + geom_col()
+```
+
+## filter() before visualizing
+The first problem is we are trying to plot way too many words at once. What we typically care about are the words with the largest counts. Right after using count() on the tidy text, we can filter based on the count n. Here we keep only those words used more than 1000 times. This cutoff will depend on the data.
+```{r}
+word_counts_comments <- tidy_qtt_post %>%
+  count(word) %>%
+  filter(n > 1000) %>%
+  arrange(desc(n))
+
+ggplot(word_counts_comments, aes(x = word, y = n)) + geom_col()
+```
+
+## Using coord_flip()
+The second problem was that the words overlapped and were hard to read on the x-axis. After geom_col(), we can add coord_flip(). This flips the coordinates of our plot so it’s easy to read our filtered set of word counts. For good measure, we use ggtitle() to explain what it is we’re plotting.
+```{r, fig.height=8}
+ggplot(word_counts_comments, aes(x = word, y = n)) +
+  geom_col() +
+  coord_flip() +
+  ggtitle("Comment Word Counts")
+```
+
+## Using fct_reorder()
+After counting and filtering for the words that occur more than 300 times, we use `mutate()` to create a new column. Within `mutate()` we use the function `fct_reorder()` and include two arguments: the column we want to reorder and the column we want to reorder it by. Here we are saying that we want our new column word2 to be composed of words ordered by the word count n.
+```{r, fig.height=8}
+word_counts_post <- tidy_qtt_post %>%
+  count(word) %>%
+  filter(n > 1000) %>%
+  mutate(word2 = fct_reorder(word, n))
+
+ggplot(word_counts_post, aes(x = word2, y = n)) +
+  geom_col() +
+  coord_flip() +
+  ggtitle("QTT Post Word Counts")
+```
+
+```{r, fig.height=9}
+tidy_qtt_post %>%
+  filter(year == "2020") %>%
+  count(word, month) %>%
+  group_by(month)%>%
+  top_n(20, n) %>%
+  ggplot(aes(x = reorder(word, n), y = n, fill = month)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~month, scales = "free") +
+  coord_flip() +
+  labs(title = "QTT Post Word Counts",x = "Words")
+```
 
 # Reference
